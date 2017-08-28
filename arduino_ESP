@@ -1,0 +1,157 @@
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+#include <Adafruit_Sensor.h>
+#include <ESP8266HTTPClient.h>
+
+ 
+const char* ssid     = "hydroponics";
+const char* password = "matavaca";
+
+const char* host = "192.168.1.101";
+//const char* streamId   = "";
+//const char* privateKey = "";
+
+static const uint8_t D0   = 16;
+static const uint8_t D1   = 5;
+static const uint8_t D2   = 4;
+static const uint8_t D3   = 0;
+static const uint8_t D4   = 2;
+static const uint8_t D5   = 14;
+static const uint8_t D6   = 12;
+static const uint8_t D7   = 13;
+static const uint8_t D8   = 15;
+static const uint8_t D9   = 3;
+static const uint8_t D10  = 1;
+
+#define DHTTYPE DHT11
+#define DHTPIN  5
+#define SOIL_PIN 4
+
+DHT dht(DHTPIN, DHTTYPE, 11); 
+
+double humidity, temp_f, hif, soil1;  // Values read from sensor
+unsigned long previousMillis = 0;  // will store last temp was read
+const long interval = 2000; // interval at which to read sensor
+int value = 0;
+char tempChar[7],humiChar[8],heatChar[5];
+
+void setup() {
+  Serial.begin(115200);
+  delay(10);
+
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  
+  /* Explicitly set the ESP8266 to be a WiFi-client, otherwise, it by default,
+     would try to act as both a client and an access-point and could cause
+     network-issues with your other WiFi-devices on your WiFi-network. */
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi connected");  
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  pinMode(SOIL_PIN, INPUT);
+}
+
+void loop() {
+  delay(5000);
+  ++value;
+
+  Serial.print("connecting to ");
+  Serial.println(host);
+  
+  // Use WiFiClient class to create TCP connections
+  WiFiClient client;
+  const int httpPort = 80;
+  if (!client.connect(host, httpPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+  // Wait at least 2 seconds seconds between measurements.
+  // if the difference between the current time and last time you read
+  // the sensor is bigger than the interval you set, read the sensor
+  // Works better than delay for things happening elsewhere also
+  unsigned long currentMillis = millis();
+ 
+  if(currentMillis - previousMillis >= interval) {
+    // save the last time you read the sensor 
+    previousMillis = currentMillis;   
+ 
+    // Reading temperature for humidity takes about 250 milliseconds!
+    // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
+    humidity = dht.readHumidity();          // Read humidity (percent)
+    temp_f = dht.readTemperature(true);     // Read temperature as Fahrenheit
+    hif = dht.computeHeatIndex(temp_f, humidity);
+    
+    // Check if any reads failed and exit early (to try again).
+    if (isnan(humidity) || isnan(temp_f)) {
+      Serial.println("Failed to read from DHT sensor!");
+      return;
+    }
+  }
+
+  soil1 = digitalRead(SOIL_PIN);
+
+  // We now create a URI for the request
+  String url = "/index.php?";//MUST have ? sign after the php file
+  url += "temp=";//DOES NOT have the & sign since its the first value
+  url += String(temp_f);
+  url += "&humi=";
+  url += String(humidity);
+  url += "&heat=";
+  url += String(hif);
+  url += "&soil=";
+  if(soil1 == 1){
+    
+    url += "wet";
+  }else{
+    url += "dry";
+  }
+  
+  Serial.print("Requesting URL: ");
+  Serial.println(url);
+  
+  // This will send the request to the server
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" + 
+               "Connection: close\r\n\r\n");
+  client.println();
+  client.println();           
+ int timeout = millis() + 5000;
+  while (client.available() == 0) {
+    if (timeout - millis() < 0) {
+      Serial.println(">>> Client Timeout !");
+      client.stop();
+      ESP.deepSleep(60U*6081000000);
+      delay(1000);
+      return;
+    }
+  }
+
+  // Read all the lines of the reply from server and print them to Serial
+  while(client.available()){
+    String line = client.readStringUntil('\r');
+    Serial.print(line);
+  }
+  
+  Serial.println();
+  Serial.println("closing connection");
+
+  Serial.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" + 
+               "Connection: close\r\n\r\n");
+  delay(600000);//10 min
+}
+
